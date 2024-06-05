@@ -102,8 +102,9 @@ def create_xarr(
         img_list.append((date.to_pydatetime(), img))
         
     dates, imgs = zip(*img_list)
-    start_time = datetime.datetime.utcnow().replace(hour=12, minute=0, second=0, microsecond=0)
-    times = [start_time + datetime.timedelta(minutes=i) for i in range(expected_shape[0])]
+    # start_time = datetime.datetime.utcnow().replace(hour=12, minute=0, second=0, microsecond=0)
+    # times = [start_time + datetime.timedelta(minutes=i) for i in range(expected_shape[0])]
+    times = pd.timedelta_range(start='12:00:00', end='23:59:00', freq='1min')
     heights = np.arange(height_start, 10 * expected_shape[1], 10)
 
     img_arr = np.stack(imgs, axis=0, dtype=out_dtype)
@@ -114,7 +115,7 @@ def create_xarr(
         img_arr,
         coords={
             'date' : list(dates),
-            'time' : list(times),
+            'time' : times,
             'height' : heights,
         },
         dims=['date','time','height'],
