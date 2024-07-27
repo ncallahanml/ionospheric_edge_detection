@@ -8,15 +8,11 @@
 *.jpg
 *.gif
 *.xlsx
+*.pkl
+*.parquet
 
-labels/*
 outputs/*
-processed_data/*
-misc/.ipynb_checkpoints/*
 .ipynb_checkpoints/*
 __pycache__/*
 
-!datasets/*
 !raw_data/*
-!labels.csv
-!official_labels

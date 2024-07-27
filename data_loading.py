@@ -1,14 +1,11 @@
 import pandas as pd
 import numpy as np
 import xarray as xr
-
-import seaborn as sns
 import matplotlib.pyplot as plt
-import scipy.stats as st
 
 import os
-import datetime
-import joblib
+
+from tqdm import tqdm
 
 def pad_axis(arr, expected_size, dtype=np.uint8, axis=0):
     shape_mismatch = expected_size - arr.shape[axis]
@@ -39,7 +36,7 @@ def pad_img(img, expected_shape=(1440, 300), dtype=np.uint8):
         img = pad_axis(img, expected_shape[i], axis=i, dtype=dtype)
     return img
 
-def cut_half(img, expected_size=1440): #, vempty=True):
+def cut_half(img, expected_size=1440):
     """ Simple preprocessing for image, could add additional adjustments here """
     if expected_size:
         assert img.shape[0] == expected_size, f'Mismatch with width, dim 0 of {img.shape} != {expected_size}'
@@ -47,72 +44,161 @@ def cut_half(img, expected_size=1440): #, vempty=True):
     img = img[expected_size // 2:,:]
     return img
 
-def create_xarr(
+def cat_date_imgs(
     parent_dir='raw_data/', 
     filter_fn=None, 
     max_iter=None, 
-    read_pandas=True, 
-    expected_shape=(720, 300),
-    dtype=np.uint8, 
+    read_lib='pandas',
+    dtype=np.uint16, 
     height_start=0, 
     time_start='12:00',
     apply_fn=None,
-    plot=True,
-    split_idx=1,
+    split_idx=-1,
 ):
-    in_dtype, out_dtype = dtype if len(dtype) == 2 else (dtype, dtype)
-    img_list = list()
-    stat_list = list()
-    file_list = sorted(os.listdir(parent_dir))
+    """
+    Function to load and preprocess a directory of raw data stored as spatial 2D NumPy arrays.
+    Arrays are loaded from files and concatenated into a single 3D NumPy array.
+    
+    ---
+    Args:
+    
+    **parent_dir** : `str` | default 'raw_data/'
+    - Directory full of raw image files
+    
+    **filter_fn** : `Callable` or `None` | default None
+    - Function applied to filter down input images from `parent_dir`
+    - Defaults to filtering directory files out if they are not CSVs
+    
+    **max_iter** : `int` or `None` | default None
+    - If integer, the maximum number of images to process from the directory
+    - If None, the entire directory will be processed
+    - Files are processed in sorted order
+    - Files that are filtered out by `filter_fn` are not considered an iteration
+    
+    **read_lib** : `str` | default 'pandas'
+    - Library to use for reading array data from CSV
+    
+    **dtype** : `np.type` or `Tuple[np.type]` | default np.uint16
+    - Type for storing images
+    - If np.type, used for both original processing and final 3d array output
+    - If tuple, must be length 2
+        - Where first argument is initial dtype
+        - The second argument is the output dtype
+    - Should stay np.uint16 for raw data, can be np.uint8 prior to ~2022
+    
+    **apply_fn** : `Callable` or `None` | default None
+    - Function to apply to each image prior to stacking
+    - Takes as input numpy image array with dtype defined by `dtype`
+    - Returns the same shape numpy image array
+    - Output dtype must be convertible to second dtype defined by `dtype`
+    
+    **split_idx** : `int` | default -1
+    - Index of the date in the name of loaded file once split by underscores
+    - -1 signifies the date is bracketed between
+        - Underscore on the left
+        - The file extension on the right
+    
+    ---
+    Returns :
+    
+    **date_img_xarr** : `xr.DataArray`
+    - 3 dimensional array with coords (date, time, height)
+    - Shape is (n, expected_shape[0], expected_shape[1])
+        - n is the length of images in the `parent_dir`
+        - Is reduced from total files based on `filter_fn` and `max_iter`
+    - Data type is determined by output dtype from `dtype`
+    - Will be raw data if `apply_fn` is None
+    
+    """
+    # fixed args, shouldn't be modified without other code changes
+    expected_shape = (720, 300)
+    start_time = '12:00:00'
+    start_height = 0
+    
+    if isinstance(dtype, tuple):
+        if not (dtype_len := len(dtype)) == 2:
+            raise ValueError(
+                f'If passing a tuple for `dtype`, must be length 2, not {dtype_len}'
+            )
+        in_dtype, out_dtype = dtype
+    elif isinstance(dtype, np.type):
+        in_dtype, out_dtype = (dtype, dtype)
+    else:
+        raise TypeError(
+            f'Expected `tuple` or `np.type` for `dtype`, not {type(dtype)}'
+        )
+    
+    img_list, stat_list = list(), list()
+
     if filter_fn is None:
+        # default filter down to CSVs only
         filter_fn = lambda x : x.endswith('.csv')
+    file_paths = sorted(filter(filter_fn, os.listdir(parent_dir)))
+    max_paths = len(file_paths) if max_iter is None else min(max_iter, len(file_paths))
+    
+    for file_path in tqdm(file_paths[:max_paths]):
+        full_path = os.path.join(parent_dir, file_path)
         
-    for i, file in enumerate(filter(filter_fn, file_list)):
-        full_path = os.path.join(parent_dir, file)
-        if max_iter is not None and i >= max_iter: break
-        print(i, end='\r')
-        split_file = file.split('_')
-        # if len(split_file) != 3:
-        #     raise ValueError('Split index incorrect')
+        file_path_date = file_path.split('_')[split_idx].replace('.csv','')
         try:
-            date = pd.to_datetime(split_file[split_idx].replace('.csv',''))
+            date = pd.to_datetime(file_path_date)
         except pd.errors.ParserError:
             raise ValueError(f'Split returned invalid date')
 
-        if read_pandas:
+        if read_lib == 'pandas':
             img = pd.read_csv(full_path)
             assert np.all(img >= 0)
             assert np.all(img <= np.iinfo(in_dtype).max)
             img = img.to_numpy(dtype=in_dtype)
-        else:
+        elif read_lib == 'numpy':
             img = np.genfromtxt(full_path, delimiter=',').astype(in_dtype)
-
-        img = pad_img(img, expected_shape=(expected_shape[0] * 2, expected_shape[1]), dtype=in_dtype) # standardize width
-        img = cut_half(img, expected_size=expected_shape[0] * 2) # trim to 12 hours of daytime
-        assert img.shape == expected_shape, img.shape
+        elif read_lib == 'modin':
+            raise NotImplementedError('Modin currently untested, not in requirements')
+            img = md.read_csv(full_path)
+        else:
+            raise ValueError(
+                f'Unrecognized literal {read_lib} for variable `read_lib`, accepts "pandas" or "numpy"'
+            )
+        
+        # standardizes width to expected size
+        img = pad_img(
+            img, 
+            expected_shape=(expected_shape[0] * 2, expected_shape[1]), 
+            dtype=in_dtype,
+        )
+        # trims to only 12 daytime hours instead of full 24
+        img = cut_half(
+            img, 
+            expected_size=expected_shape[0] * 2,
+        )
+        # verifies dimensions all match before stacking
+        if img.shape != expected_shape:
+            raise ValueError(
+                f'Expected image shape {expected_shape}, received {img.shape}'
+            )
+        # applies function in 2d
         if apply_fn is not None:
             img = apply_fn(img)
-
-        if plot:
-            plt.figure()
-            plt.title(file)
-            plt.imshow(img.T)
-            plt.show()
             
         img_list.append((date.to_pydatetime(), img))
         
     dates, imgs = zip(*img_list)
-    # start_time = datetime.datetime.utcnow().replace(hour=12, minute=0, second=0, microsecond=0)
-    # times = [start_time + datetime.timedelta(minutes=i) for i in range(expected_shape[0])]
-    times = pd.timedelta_range(start='12:00:00', end='23:59:00', freq='1min')
-    heights = np.arange(height_start, 10 * expected_shape[1], 10)
 
-    img_arr = np.stack(imgs, axis=0, dtype=out_dtype)
-    assert img_arr.shape[1] == expected_shape[0], f'{img_arr.shape} | {expected_shape}'
-    assert img_arr.shape[2] == expected_shape[1], f'{img_arr.shape} | {expected_shape}'
-        
-    full_xarr = xr.DataArray(
-        img_arr,
+    # image horizontal labels
+    times = pd.timedelta_range(
+        start=start_time, 
+        end='23:59:00', 
+        freq='1min',
+    )
+    # image vertical labels
+    heights = np.arange(
+        start_height, 
+        10 * expected_shape[1], 
+        10,
+    )
+
+    date_img_xarr = xr.DataArray(
+        np.stack(imgs, axis=0, dtype=out_dtype),
         coords={
             'date' : list(dates),
             'time' : times,
@@ -120,45 +206,15 @@ def create_xarr(
         },
         dims=['date','time','height'],
     )
-    return full_xarr
-
-def str_to_float_col(x):
-    return x.astype(str).str.strip().replace('',0).astype(np.float32)
-
-def create_label_df(csv_path='official_labels.csv'):
-    official_df = pd.read_csv(csv_path)
-    
-    index = pd.to_datetime(official_df['Date'].str.strip(), format='%m/%d/%Y')
-    index.name = 'date'
-    label_df = pd.DataFrame(
-        {
-            'binary_label' : ~(official_df['Start time'] == 0),
-            'xmin' : str_to_float_col(official_df['Start time']).sub(12).multiply(60),
-            'xmax' : str_to_float_col(official_df['End time']).sub(12).multiply(60),
-            'ymin' : str_to_float_col(official_df['Low range']).div(10),
-            'ymax' : str_to_float_col(official_df['High range']).div(10),
-            'period' : str_to_float_col(official_df['Period']).multiply(60),            
-        },
-        index=index,
-    )
-    return label_df
-
-# def quantile_normalize(t):
-#     assert t.shape[0] > t.shape[1] and t.shape[1] > t.shape[2], t.shape
-#     flat_t = t.reshape(t.shape[0], -1)
-#     flat_t = st.rankdata(flat_t, method='dense', axis=1) #, nan_policy='raise')
-    
-#     quantiles = ranks / len(chunk)
-
-#     # Apply inverse cumulative distribution function to get normalized values
-#     normalized_values = np.percentile(chunk, quantiles * 100)
-    
-#     t = flat_t.reshape(t.shape)
-#     return t
+    return date_img_xarr
 
 def mad(t, min_dev=.05):
     median = np.median(t, axis=(0, 1), keepdims=True)
     abs_devs = np.abs(t - median)
-    mad = abs_devs / max(np.median(abs_devs, axis=(0, 1), keepdims=True), min_dev)
+    max_median = max(
+        np.median(abs_devs, axis=(0, 1), keepdims=True), 
+        min_dev,
+    )
+    mad = abs_devs / max_median
     assert t.shape == mad.shape, f'{t.shape} | {mad.shape}'
     return mad

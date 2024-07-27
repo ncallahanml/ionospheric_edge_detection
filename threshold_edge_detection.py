@@ -1,18 +1,11 @@
-# import math
-# import matplotlib.pyplot as plt
-# import seaborn as sns
 import numpy as np
 import statsmodels.api as sm
-# import pandas as pd
 
 from scipy.interpolate import CubicSpline
-# from scipy.ndimage import gaussian_filter
 from scipy import signal
-# from utils import DateIter
-# from IPython.display import clear_output
 
 def occurrence_max(arr, n, equal=False):
-    ## change this to be two sided
+    ## change this to be two sided?
     hist, bins = np.histogram(arr, bins=np.arange(np.min(arr), np.max(arr) + 2))
     bins = bins[1:]
 
@@ -56,6 +49,20 @@ def stack_all_thresholds(arr, select_min=True, exact_thresh=False, axis=0, **res
     thresh_edge_arr = np.concatenate(thresh_edges, axis=axis)
     return thresh_edge_arr
 
+def measure_thresholds(arr, qs=.8, lower_cutoff=10, **threshold_kwargs):
+    thresh_edge_arr = stack_all_thresholds(arr, **threshold_kwargs)
+    
+    thresh_edge_arr = thresh_edge_arr.astype(np.float32)
+    thresh_edge_arr[thresh_edge_arr < lower_cutoff] = np.nan   
+    
+    if isinstance(qs, float):
+        qs = [qs]
+
+    med_lines = [np.nanquantile(thresh_edge_arr, q, axis=0) for q in qs]
+    min_line, minz_line = select_min_deviation(med_lines, lowess_smooth)
+    
+    return med_lines, min_line, minz_line
+
 def lowess_smooth(arr, window_size=10, x=None):
     if x is None:
         x = np.linspace(0, len(arr), len(arr))
@@ -84,27 +91,12 @@ def select_min_deviation(arrs, smooth_fn, max_abs_dev=20):
     min_arr = None
     min_dev = np.inf
     for arr in arrs:
-#         z = smooth_fn(arr)
         z = smooth_remove_abs_deviation(arr, smooth_fn, max_abs_dev=max_abs_dev)
         dev = np.std(arr - z)
         if min_arr is None or dev < min_dev:
             min_arr = (arr, z)
             min_dev = dev
     return min_arr
-
-def measure_thresholds(arr, qs=.8, lower_cutoff=10, **threshold_kwargs):
-    thresh_edge_arr = stack_all_thresholds(arr, **threshold_kwargs)
-    
-    thresh_edge_arr = thresh_edge_arr.astype(np.float32)
-    thresh_edge_arr[thresh_edge_arr < lower_cutoff] = np.nan   
-    
-    if isinstance(qs, float):
-        qs = [qs]
-
-    med_lines = [np.nanquantile(thresh_edge_arr, q, axis=0) for q in qs]
-    min_line, minz_line = select_min_deviation(med_lines, lowess_smooth)
-    
-    return med_lines, min_line, minz_line
 
 def non_diag_corr(df):
     arr = df.to_numpy()
