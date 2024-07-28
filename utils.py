@@ -26,7 +26,7 @@ from data_loading import (
 )
 # from utils import DateIter
 from threshold_edge_detection import (
-    lowess_smooth,
+    # lowess_smooth,
     measure_thresholds,
 )
 
@@ -82,7 +82,12 @@ def save_wrap(save_dir, fmt='%Y-%m-%d', ext='.png', **kwargs):
         return
     return wrapped
 
-def plot_day(arr_df, data, edge_line):
+def plot_day(arr_df, data, edge_line, date, plt_save_path, plot):
+    if plt_save_path is not None:
+        save_plt = save_wrap(plt_save_path)
+    else:
+        save_plt = None
+
     fig, ax = plt.subplots(1, 1, figsize=(15,8))
     plt.title(f'| {date} |')
 
@@ -117,6 +122,17 @@ def plot_day(arr_df, data, edge_line):
     plt.show() if plot else plt.clear()
     return
 
+def trim_edges(arr, x_trim, y_trim):
+    xl_trim, xr_trim = x_trim if isinstance(x_trim, (tuple, list)) else (x_trim, x_trim)
+    yl_trim, yr_trim = x_trim if isinstance(y_trim, (tuple, list)) else (y_trim, y_trim)
+    xr = math.floor(xl_trim * arr.shape[0])
+    xl = math.floor(xr_trim * arr.shape[0])
+    yr = math.floor(yl_trim * arr.shape[1])
+    yl = math.floor(yr_trim * arr.shape[1])
+
+    arr = arr[xr:-xl, yr:-yl]
+    return arr
+
 def run_edge_detect(
     dates,
     date_iter,
@@ -131,12 +147,7 @@ def run_edge_detect(
     plt_save_path=None,
     csv_save_path=None,
     thresh=None,
-):
-    if plt_save_path is not None:
-        save_plt = save_wrap(plt_save_path)
-    else:
-        save_plt = None
-        
+):       
     final_edge_list = list()
     if dates == 'all':
         date_gen = date_iter.iter_all()
@@ -150,17 +161,11 @@ def run_edge_detect(
             
         if not i % clear_every:
             clear_output()
-
-        xl_trim, xr_trim = x_trim if isinstance(x_trim, (tuple, list)) else (x_trim, x_trim)
-        yl_trim, yr_trim = x_trim if isinstance(y_trim, (tuple, list)) else (y_trim, y_trim)
-        xr = math.floor(xl_trim * arr.shape[0])
-        xl = math.floor(xr_trim * arr.shape[0])
-        yr = math.floor(yl_trim * arr.shape[1])
-        yl = math.floor(yr_trim * arr.shape[1])
-
-        arr = arr[xr:-xl, yr:-yl]
+        
+        arr = trim_edges(arr, x_trim, y_trim)
         heights, times = arr.coords['height'], arr.coords['time']
 
+        # next lines convert from xarray arr to numpy arr
         arr = np.nan_to_num(arr, nan=0)
         arr = gaussian_filter(arr.T[::1,:], sigma=(sigma, sigma))  # [::-1,:]
         
@@ -205,13 +210,13 @@ def run_edge_detect(
             pd.Series(min_line.squeeze(), index=times, name=date)
         )
 
-        if plot or save_plt is not None:
+        if plot or plt_save_path is not None:
             arr_df = pd.DataFrame(
                 arr,
                 index=heights,
                 columns=times,
             )
-            plot_day(arr_df, data, edge_line)
+            plot_day(arr_df, data, edge_line, date, plt_save_path, plot)
             
     final_edge_df = pd.concat(final_edge_list, axis=1)
     if csv_save_path:

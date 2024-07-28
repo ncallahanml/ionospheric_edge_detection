@@ -1,9 +1,9 @@
+import os
+
 import pandas as pd
 import numpy as np
 import xarray as xr
 import matplotlib.pyplot as plt
-
-import os
 
 from tqdm import tqdm
 
@@ -21,8 +21,15 @@ def pad_axis(arr, expected_size, dtype=np.uint8, axis=0):
         right_pad = -shape_mismatch - left_pad
         arr = arr[:,left_pad:-right_pad]
         
-    assert arr.dtype == dtype, dtype
-    assert arr.shape[axis] == expected_size, f'{arr.shape[axis]} Mismatches Expected {axis} Dimension of {expected_size}'
+    if arr.dtype != dtype:
+        raise TypeError(
+            f'output array unexpected dtype, expected {arr.dtype} recieved {dtype}'
+        )
+    
+    if arr.shape[axis] != expected_size:
+        raise ValueError(
+            f'{arr.shape[axis]} Mismatches Expected {axis} Dimension of {expected_size}'
+        )
     return arr
     
 def pad_img(img, expected_shape=(1440, 300), dtype=np.uint8):
@@ -31,7 +38,10 @@ def pad_img(img, expected_shape=(1440, 300), dtype=np.uint8):
     the intended (1440, 300) size. This pads the image to make
     it exactly (1440, 300) but does so evenly on both sides, if required.
     """
-    assert len(expected_shape) == img.ndim
+    if len(expected_shape) != img.ndim:
+        raise ValueError(
+            f'Mismatched dimensions, expected {len(expected_shape)} received {img.ndim} for shape {img.shape}'
+        )
     for i in range(img.ndim):
         img = pad_axis(img, expected_shape[i], axis=i, dtype=dtype)
     return img
@@ -39,8 +49,14 @@ def pad_img(img, expected_shape=(1440, 300), dtype=np.uint8):
 def cut_half(img, expected_size=1440):
     """ Simple preprocessing for image, could add additional adjustments here """
     if expected_size:
-        assert img.shape[0] == expected_size, f'Mismatch with width, dim 0 of {img.shape} != {expected_size}'
-        assert not expected_size % 2, 'Width must be even'
+        if img.shape[0] != expected_size:
+            raise ValueError(
+                f'Mismatch with width, dim 0 of {img.shape} != {expected_size}'
+            )
+        if expected_size % 2:
+            raise ValueError(
+                f'Width must be even, received {expected_size}'
+            )
     img = img[expected_size // 2:,:]
     return img
 
@@ -147,8 +163,14 @@ def cat_date_imgs(
 
         if read_lib == 'pandas':
             img = pd.read_csv(full_path)
-            assert np.all(img >= 0)
-            assert np.all(img <= np.iinfo(in_dtype).max)
+            if not np.all(img >= 0):
+                raise ValueError(
+                    f'Input data of shape {img.shape} contains only zeros'
+                )
+            if not np.all(img <= np.iinfo(in_dtype).max):
+                raise ValueError(
+                    f'Unacceptable input dtype {in_dtype} passed, value {np.amax(img.ravel())} exceeds size limits'
+                )
             img = img.to_numpy(dtype=in_dtype)
         elif read_lib == 'numpy':
             img = np.genfromtxt(full_path, delimiter=',').astype(in_dtype)
@@ -209,6 +231,7 @@ def cat_date_imgs(
     return date_img_xarr
 
 def mad(t, min_dev=.05):
+    # median absolute deviation
     median = np.median(t, axis=(0, 1), keepdims=True)
     abs_devs = np.abs(t - median)
     max_median = max(
@@ -216,5 +239,8 @@ def mad(t, min_dev=.05):
         min_dev,
     )
     mad = abs_devs / max_median
-    assert t.shape == mad.shape, f'{t.shape} | {mad.shape}'
+    if t.shape != mad.shape:
+        raise ValueError(
+            f'Function internal error, input shape {t.shape} mismatches output shape {mad.shape}'
+        )
     return mad

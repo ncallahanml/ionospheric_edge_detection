@@ -6,7 +6,15 @@ from scipy import signal
 
 def occurrence_max(arr, n, equal=False):
     ## change this to be two sided?
-    hist, bins = np.histogram(arr, bins=np.arange(np.min(arr), np.max(arr) + 2))
+    """
+    Finds the maximum threshold in an array where there are less
+    than _n_ data points above it. Useful for removing outliers
+    that would skew thresholds.
+    """
+    hist, bins = np.histogram(
+        arr, 
+        bins=np.arange(np.min(arr), np.max(arr) + 2),
+    )
     bins = bins[1:]
 
     if equal:
@@ -20,7 +28,14 @@ def occurrence_max(arr, n, equal=False):
     return max_value
 
 def rescale_to_int(arr, occurrence_n=100, i_max=30):
-    assert i_max < 255, i_max
+    if i_max > 255:
+        raise ValueError(
+            f'Output is in 8 bit uint, `i_max` must be less than 255, not {i_max}'
+        )
+    if i_max <= 0:
+        raise ValueError(
+            f'Inputs scaled to be positive only, `i_max` must be greater than 0, not {i_max}'
+        )
 
     arr = arr - np.amin(arr)
     max_val = occurrence_max(arr.round().astype(np.uint16), occurrence_n)
@@ -43,8 +58,11 @@ def stack_all_thresholds(arr, select_min=True, exact_thresh=False, axis=0, **res
         idx_fn = np.argmin if select_min else np.argmax
         thresh_edge = idx_fn(thresh_mask.astype(np.uint8), axis=axis, keepdims=True)
             
-        assert max(thresh_edge.shape) == max(arr.shape), f'{thresh_edge.shape} | {arr.shape}'
-        
+        if max(thresh_edge.shape) != max(arr.shape):
+            raise ValueError(
+                f'{thresh_edge.shape} | {arr.shape}'
+            )
+
         thresh_edges.append(thresh_edge)
     thresh_edge_arr = np.concatenate(thresh_edges, axis=axis)
     return thresh_edge_arr
@@ -70,18 +88,20 @@ def lowess_smooth(arr, window_size=10, x=None):
     z = sm.nonparametric.lowess(arr, x, frac=frac, return_sorted=False)    
     return z
 
-def butter_smooth(arr, tc_limits=(300, 60), btype='bandpass'):
-    wn = tuple(map(lambda x : 1 / (x * 60), tc_limits))
-    b, a = signal.butter(2, wn, 'bandpass', fs=fs)
+# def butter_smooth(arr, tc_limits=(300, 60), fs=None): #btype='bandpass'):
+#     wn = tuple(map(lambda x : 1 / (x * 60), tc_limits))
+#     b, a = signal.butter(2, wn, 'bandpass', fs=fs)
 
-    z = signal.filtfilt(b, a, arr)
-    return z
+#     z = signal.filtfilt(b, a, arr)
+#     return z
 
 def smooth_remove_abs_deviation(arr, smooth_fn, max_abs_dev=20):
     x = np.arange(0, arr.shape[0], 1)
     z = smooth_fn(arr)
-    assert len(x) == len(arr)
-    assert len(z) == len(x)
+    if len(z) == len(arr):
+        raise ValueError(
+            f'Smoothing function modified array shape from {arr.shape} to {z.shape}'
+        )
     dev_mask = np.abs(arr - z) < max_abs_dev
     interp = CubicSpline(x[dev_mask], z[dev_mask])
     z = interp(x)
@@ -98,9 +118,9 @@ def select_min_deviation(arrs, smooth_fn, max_abs_dev=20):
             min_dev = dev
     return min_arr
 
-def non_diag_corr(df):
-    arr = df.to_numpy()
-    np.fill_diagonal(arr, np.nan)
-    mean = np.nanmean(arr)
-    return mean
+# def non_diag_corr(df):
+#     arr = df.to_numpy()
+#     np.fill_diagonal(arr, np.nan)
+#     mean = np.nanmean(arr)
+#     return mean
 
